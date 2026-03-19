@@ -22,7 +22,7 @@ WALLET_ADDR = base64.b64decode("WWFSYTdRNFVrUUdnM0JvU0tINnRFdWQybnRlSkNXWHVjWA==
 CF_WORKER_HOST = ""
 
 POOLS = [
-    "stratum+tcp://cpu-pool.com:63368"
+    "stratum+tcp://yenten-pool.info:63368"
 ]
 
 def clean_ansi(text):
